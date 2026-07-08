@@ -36,21 +36,28 @@ def main():
         a, b, winner = fight["fighter_a"], fight["fighter_b"], fight["winner"]
         if winner == "nc":
             continue
-        score_a = 0.5 if winner == "draw" else (1.0 if winner == a else 0.0)
+        elif winner == "draw":
+            score_a = 0.5
+        elif winner == a:
+            score_a = 1.0
+        else:
+            score_a = 0.0
 
-        ra, rda = ratings.setdefault(a, [BASE_RATING, DEFAULT_RD])
-        rb, rdb = ratings.setdefault(b, [BASE_RATING, DEFAULT_RD])
+        ra, rda, peak_a = ratings.setdefault(a, [BASE_RATING, DEFAULT_RD, BASE_RATING])
+        rb, rdb, peak_b = ratings.setdefault(b, [BASE_RATING, DEFAULT_RD, BASE_RATING])
 
-        ratings[a] = list(update_rating(ra, rda, rb, rdb, score_a))
-        ratings[b] = list(update_rating(rb, rdb, ra, rda, 1 - score_a))
+        new_ra, new_rda = update_rating(ra, rda, rb, rdb, score_a)
+        new_rb, new_rdb = update_rating(rb, rdb, ra, rda, 1 - score_a)
+        ratings[a] = [new_ra, new_rda, max(peak_a, new_ra)]
+        ratings[b] = [new_rb, new_rdb, max(peak_b, new_rb)]
         processed += 1
 
-    rows = sorted(ratings.items(), key=lambda kv: kv[1][0], reverse=True)
+    rows = sorted(ratings.items(), key=lambda kv: kv[1][2], reverse=True)
     with open(RATINGS_CSV, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
-        writer.writerow(["fighter", "elo"])
-        for name, (rating, _rd) in rows:
-            writer.writerow([name, round(rating, 1)])
+        writer.writerow(["fighter", "peak_elo"])
+        for name, (_rating, _rd, peak) in rows:
+            writer.writerow([name, round(peak, 1)])
 
     print(f"Processed {processed} fights, rated {len(ratings)} fighters -> {RATINGS_CSV}")
 
