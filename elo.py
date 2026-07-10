@@ -25,7 +25,7 @@ FIGHTS_CSV = os.path.join(os.path.dirname(__file__), "data", "fights.csv")
 RATINGS_CSV = os.path.join(os.path.dirname(__file__), "data", "ratings.csv")
 
 def main():
-    with open(FIGHTS_CSV, newline="", encoding="utf-8") as f:
+    with open(FIGHTS_CSV, "r", newline="", encoding="utf-8") as f:
         fights = list(csv.DictReader(f))
     fights.sort(key=lambda r: r["date"])
 
@@ -43,13 +43,13 @@ def main():
         else:
             score_a = 0.0
 
-        ra, rda, peak_a = ratings.setdefault(a, [BASE_RATING, DEFAULT_RD, BASE_RATING])
-        rb, rdb, peak_b = ratings.setdefault(b, [BASE_RATING, DEFAULT_RD, BASE_RATING])
+        ra, rda, peak_ra = ratings.setdefault(a, [BASE_RATING, DEFAULT_RD, BASE_RATING])
+        rb, rdb, peak_rb = ratings.setdefault(b, [BASE_RATING, DEFAULT_RD, BASE_RATING])
 
         new_ra, new_rda = update_rating(ra, rda, rb, rdb, score_a)
         new_rb, new_rdb = update_rating(rb, rdb, ra, rda, 1 - score_a)
-        ratings[a] = [new_ra, new_rda, max(peak_a, new_ra)]
-        ratings[b] = [new_rb, new_rdb, max(peak_b, new_rb)]
+        ratings[a] = [new_ra, new_rda, max(peak_ra, new_ra)]
+        ratings[b] = [new_rb, new_rdb, max(peak_rb, new_rb)]
         processed += 1
 
     rows = sorted(ratings.items(), key=lambda kv: kv[1][2], reverse=True)
@@ -59,7 +59,7 @@ def main():
         for name, (_rating, _rd, peak) in rows:
             writer.writerow([name, round(peak, 1)])
 
-    print(f"Processed {processed} fights, rated {len(ratings)} fighters -> {RATINGS_CSV}")
+    print(f"Processed {processed} fights, rated {len(ratings)} fighters")
 
 if __name__ == "__main__":
     main()
