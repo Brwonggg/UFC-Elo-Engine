@@ -1,27 +1,31 @@
-import csv
-import hashlib
-import os
-import re
-import time
+import csv, os, re, time, requests, hashlib
 from datetime import date, datetime
-import requests
 from bs4 import BeautifulSoup
 
 BASE = "http://ufcstats.com"
 EVENTS_URL = f"{BASE}/statistics/events/completed?page=all"
 CSV_PATH = os.path.join(os.path.dirname(__file__), "data", "fights.csv")
-YEARS = 10
+YEARS = 12
 HEADERS = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
                          "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36"}
 FIELDS = ["fight_id", "date", "event", "fighter_a", "fighter_b", "winner",
           "weight_class", "method", "round", "time",
           "kd_a", "kd_b", "str_a", "str_b", "td_a", "td_b", "sub_a", "sub_b"]
+STAT_COLS = {"kd": 2, "str": 3, "td": 4, "sub": 5}
 
+def to_int(val):
+    match = re.search(r"-?\d+", val or "")
+    return int(match.group()) if match else 0
+
+def clean_text(val):
+    return re.sub(r"\s+", " ", (val or "").strip())
+
+def col_val(cols, i, j=0):
+    if i < len(cols) and j < len(cols[i]):
+        return cols[i][j]
+    return ""
 
 def fetch(session, url):
-    """
-    GET a page, solving the site's SHA-256 proof-of-work gate if present.
-    """
     html = session.get(url, headers=HEADERS, timeout=30).text
     if "Checking your browser" in html:
         nonce = re.search(r'nonce="([a-f0-9]+)"', html).group(1)
@@ -34,11 +38,8 @@ def fetch(session, url):
         html = session.get(url, headers=HEADERS, timeout=30).text
     return html
 
-
 def parse_events(html):
-    """
-    Return [(event_url, date)] for events within the last 10 years.
-    """
+    """Return [(event_url, date)] for events within the last YEARS years."""
     soup = BeautifulSoup(html, "html.parser")
     cutoff = date(date.today().year - YEARS, date.today().month, date.today().day)
     events = []
@@ -55,66 +56,47 @@ def parse_events(html):
             events.append((link["href"], when))
     return events
 
-
 def parse_event(html, event_date):
-    """
-    Return one dict per fight on an event page.
-    """
     soup = BeautifulSoup(html, "html.parser")
-    event_name = soup.select_one("h2").get_text(strip=True) if soup.select_one("h2") else ""
+    heading = soup.select_one("h2")
+    event_name = clean_text(heading.get_text()) if heading else ""
     fights = []
     for row in soup.select("tr.b-fight-details__table-row[data-link]"):
         cols = [[p.get_text(strip=True) for p in c.select("p")]
                 for c in row.select("td.b-fight-details__table-col")]
-        if len(cols) < 10 or len(cols[1]) < 2:
-            continue  
+
+        fighter_a = clean_text(col_val(cols, 1, 0))
+        fighter_b = clean_text(col_val(cols, 1, 1))
+        if not fighter_a or not fighter_b:
+            continue
 
         flags = [f.get_text(strip=True).lower() for f in row.select("i.b-flag__text")]
-        fighter_a, fighter_b = cols[1][0], cols[1][1]
-        if "draw" in flags:
-            winner = "draw"
-        elif "nc" in flags:
-            winner = "nc"
-        else:
-            winner = fighter_a  
+        winner = "draw" if "draw" in flags else "nc" if "nc" in flags else fighter_a
 
-        def pair(col):
-            return (col + ["", ""])[:2]
-
-        kd_a, kd_b = pair(cols[2])
-        str_a, str_b = pair(cols[3])
-        td_a, td_b = pair(cols[4])
-        sub_a, sub_b = pair(cols[5])
-
-        fights.append({
+        fight = {
             "fight_id": row["data-link"].rsplit("/", 1)[-1],
             "date": event_date.isoformat(),
             "event": event_name,
             "fighter_a": fighter_a,
             "fighter_b": fighter_b,
             "winner": winner,
-            "weight_class": cols[6][0] if cols[6] else "",
-            "method": cols[7][0] if cols[7] else "",
-            "round": cols[8][0] if cols[8] else "",
-            "time": cols[9][0] if cols[9] else "",
-            "kd_a": kd_a, "kd_b": kd_b,
-            "str_a": str_a, "str_b": str_b,
-            "td_a": td_a, "td_b": td_b,
-            "sub_a": sub_a, "sub_b": sub_b,
-        })
+            "weight_class": clean_text(col_val(cols, 6, 0)),
+            "method": clean_text(col_val(cols, 7, 0)),
+            "round": to_int(col_val(cols, 8, 0)),
+            "time": clean_text(col_val(cols, 9, 0)),
+        }
+        for name, i in STAT_COLS.items():
+            fight[f"{name}_a"] = to_int(col_val(cols, i, 0))
+            fight[f"{name}_b"] = to_int(col_val(cols, i, 1))
+        fights.append(fight)
     return fights
 
-
 def load_existing():
-    """
-    Return (rows, set of fight_ids) already stored.
-    """
     if not os.path.exists(CSV_PATH):
         return [], set()
     with open(CSV_PATH, newline="", encoding="utf-8") as f:
         rows = list(csv.DictReader(f))
     return rows, {r["fight_id"] for r in rows}
-
 
 def main():
     session = requests.Session()
@@ -124,13 +106,16 @@ def main():
     events = parse_events(fetch(session, EVENTS_URL))
     print(f"{len(events)} events in the last {YEARS} years.")
 
+    stored_dates = {r["date"] for r in rows}
+    oldest_stored = min(stored_dates) if stored_dates else None
+    newest_stored = max(stored_dates) if stored_dates else None
+
     new_rows = []
     for i, (url, when) in enumerate(events, 1):
+        if oldest_stored and oldest_stored < when.isoformat() < newest_stored:
+            continue
         fights = parse_event(fetch(session, url), when)
         fresh = [fight for fight in fights if fight["fight_id"] not in seen]
-        if not fresh and any(fight["fight_id"] in seen for fight in fights):
-            print(f"[{i}/{len(events)}] {when} already stored - stopping.")
-            break  
         for fight in fresh:
             seen.add(fight["fight_id"])
             new_rows.append(fight)
@@ -147,7 +132,6 @@ def main():
         writer.writerows(all_rows)
 
     print(f"Added {len(new_rows)} new fights. Total {len(all_rows)} -> {CSV_PATH}")
-
 
 if __name__ == "__main__":
     main()
