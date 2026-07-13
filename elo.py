@@ -24,13 +24,12 @@ def update_rating(rating, rd, opponent_rating, opponent_rd, score):
 FIGHTS_CSV = os.path.join(os.path.dirname(__file__), "data", "fights.csv")
 RATINGS_CSV = os.path.join(os.path.dirname(__file__), "data", "ratings.csv")
 
-def main():
+def compute_ratings():
     with open(FIGHTS_CSV, "r", newline="", encoding="utf-8") as f:
         fights = list(csv.DictReader(f))
     fights.sort(key=lambda r: r["date"])
 
     ratings = {}
-    processed = 0
 
     for fight in fights:
         a, b, winner = fight["fighter_a"], fight["fighter_b"], fight["winner"]
@@ -50,8 +49,11 @@ def main():
         new_rb, new_rdb = update_rating(rb, rdb, ra, rda, 1 - score_a)
         ratings[a] = [new_ra, new_rda, max(peak_ra, new_ra)]
         ratings[b] = [new_rb, new_rdb, max(peak_rb, new_rb)]
-        processed += 1
 
+    return ratings
+
+def main():
+    ratings = compute_ratings()
     rows = sorted(ratings.items(), key=lambda kv: kv[1][2], reverse=True)
     with open(RATINGS_CSV, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
@@ -59,7 +61,7 @@ def main():
         for name, (_rating, _rd, peak) in rows:
             writer.writerow([name, round(peak, 1)])
 
-    print(f"Processed {processed} fights, rated {len(ratings)} fighters")
+    print(f"Rated {len(ratings)} fighters")
 
 if __name__ == "__main__":
     main()
